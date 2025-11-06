@@ -98,5 +98,5 @@ Circle-Eater/
 - Custom player skins / themes
 
 ## 🧑‍💻 Author
-# Alexander Busk Nielsen
-Built with ❤️ using Python + Pygame
+**Alexander Busk Nielsen**
+Built with ❤️ using **Python** + **Pygame**
