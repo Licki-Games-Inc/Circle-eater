@@ -61,8 +61,8 @@ Press **S** in the leaderboard to toggle between **Recent** and **Best Times**.
 
 | Sound | Source |
 |--------|---------|
-| `pickupCoin.wav` | Button clicks |
-| `powerUp.wav` | When you eat a circle |
+| `pickupCoin.wav` | JFXR |
+| `powerUp.wav` | JFXR |
 
 *(You can replace these with your own sound files if you like.)*
 
