@@ -32,13 +32,17 @@ RED = (220, 40, 40)
 SHADOW = (0, 0, 0, 140)
 
 # -------------------- Sounds / Music --------------------
-Button_Click_sfx = pygame.mixer.Sound("Python/1_Projekt_Pygame/Assets/sfx/pickupCoin.wav")
-Enemy_Kill_sfx = pygame.mixer.Sound("Python/1_Projekt_Pygame/Assets/sfx/powerUp.wav")
+Button_Click_sfx = pygame.mixer.Sound("1_Projekt_Pygame/Assets/sfx/pickupCoin.wav")
+Enemy_Kill_sfx = pygame.mixer.Sound("1_Projekt_Pygame/Assets/sfx/powerUp.wav")
 
-Music_Background = pygame.mixer.Sound("Python/1_Projekt_Pygame/Assets/music/background_music.mp3")
+Music_Background = pygame.mixer.Sound("1_Projekt_Pygame/Assets/music/background_music.mp3")
+
+# ★ change: keep a persistent channel reference for live volume updates
+MUSIC_CHANNEL = None
+
 # -------------------- Storage Paths -------------------
-LEADERBOARD_PATH = "Python/1_Projekt_Pygame/Assets/save_files/leaderboard.json"
-SETTINGS_PATH = "Python/1_Projekt_Pygame/Assets/save_files/settings.json"
+LEADERBOARD_PATH = "1_Projekt_Pygame/Assets/save_files/leaderboard.json"
+SETTINGS_PATH = "1_Projekt_Pygame/Assets/save_files/settings.json"
 
 # -------------------- Settings ------------------------
 DEFAULT_SETTINGS = {
@@ -74,11 +78,29 @@ def apply_display_settings():
     screen = pygame.display.set_mode((WIDTH, HEIGHT), flags)
 
 def apply_audio_settings():
-    # Master * SFX controls effective volume for game sfx
-    eff = float(SETTINGS.get("master_volume", 1.0)) * float(SETTINGS.get("sfx_volume", 1.0))
-    eff = max(0.0, min(1.0, eff))
-    Button_Click_sfx.set_volume(eff)
-    Enemy_Kill_sfx.set_volume(eff)
+    # ★ change: do NOT reset MUSIC_CHANNEL here; just apply volumes
+    global MUSIC_CHANNEL
+    # SFX volume = master × sfx
+    eff_sfx = float(SETTINGS.get("master_volume", 1.0)) * float(SETTINGS.get("sfx_volume", 1.0))
+    eff_sfx = max(0.0, min(1.0, eff_sfx))
+
+    # Music volume = master only
+    eff_music = float(SETTINGS.get("master_volume", 1.0))
+    eff_music = max(0.0, min(1.0, eff_music))
+
+    # Apply to SFX sound objects (future plays use this)
+    Button_Click_sfx.set_volume(eff_sfx)
+    Enemy_Kill_sfx.set_volume(eff_sfx)
+
+    # Apply to the currently playing music channel (affects live playback)
+    if MUSIC_CHANNEL is not None:
+        try:
+            MUSIC_CHANNEL.set_volume(eff_music)
+        except Exception:
+            pass
+    else:
+        # Also set default on the Sound object for next play
+        Music_Background.set_volume(eff_music)  # harmless if not playing
 
 def apply_all_settings():
     apply_display_settings()
@@ -271,7 +293,11 @@ def text_input_dialog(prompt, default_text="Player", max_len=16):
                     return s if s else default_text
                 elif event.key == pygame.K_ESCAPE:
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    # stop music politely if dialog was opened while it played
+                    global MUSIC_CHANNEL
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return default_text
                 elif event.key == pygame.K_BACKSPACE:
                     if text:
@@ -363,8 +389,11 @@ def get_difficulty_speed_multiplier():
 
 # -------------------- Game Loop -----------------------
 def run_game():
-    
-    Music_Background.play(-40)
+    global MUSIC_CHANNEL
+    # start/loop music and immediately apply current volume
+    MUSIC_CHANNEL = Music_Background.play(loops=-1)
+    apply_audio_settings()  # immediately set volume for the live channel
+
     # Player
     player = gb.Player(100, 100, 25, 5, (255, 0, 0))
     player.health = 100
@@ -389,19 +418,26 @@ def run_game():
     is_new_record = False  # set upon win
 
     while True:
+        # ★ change: DO NOT reset MUSIC_CHANNEL here (was breaking volume updates)
         # ---------- Events ----------
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                Music_Background.stop()
+                if MUSIC_CHANNEL is not None:
+                    MUSIC_CHANNEL.stop()
+                    MUSIC_CHANNEL = None
                 return ("menu", None)
             if event.type == pygame.KEYDOWN:
                 if not game_won and event.key == pygame.K_ESCAPE:
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return ("menu", None)
                 if game_won and event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return ("menu", None)
 
         keys = pygame.key.get_pressed()
@@ -423,8 +459,7 @@ def run_game():
 
             pygame.display.flip()
             clock.tick(60)
-            Music_Background.stop()
-
+            # (no auto-stop here; it stops when leaving the win screen via keys)
             continue
 
         # ---------- Gameplay ----------
@@ -490,7 +525,6 @@ def run_game():
         pygame.draw.circle(screen, player.color, (player.x, player.y), player.radius)
         draw_name_tag(screen, SETTINGS.get("last_name", "Player"), player.x, player.y, player.radius)
 
-
         # HUD
         elapsed_s = (pygame.time.get_ticks() - start_ticks) / 1000.0
         points_surf = FONT.render(f"Points: {points}", True, BLACK)
@@ -504,7 +538,6 @@ def run_game():
 
             # Use stored name automatically
             name_entered = SETTINGS.get("last_name", "Player")
-
 
             # Determine record BEFORE saving (so we compare to previous best)
             prev = load_leaderboard().get("best_time", None)
@@ -527,9 +560,12 @@ def run_game():
 
 # -------------------- Leaderboard Screen ----------------
 def leaderboard_screen():
+    global MUSIC_CHANNEL  # ★ change: declare global since we reference it
     back_btn = Button("Back", center=(120, HEIGHT - 50), size=(180, 50))
     clear_btn = Button("Clear All", center=(WIDTH - 140, HEIGHT - 50), size=(200, 50))
-    Music_Background.stop()
+    if MUSIC_CHANNEL is not None:
+        MUSIC_CHANNEL.stop()
+        MUSIC_CHANNEL = None
 
     # Layout
     TITLE_Y = 40
@@ -578,7 +614,6 @@ def leaderboard_screen():
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_RETURN):
                     Button_Click_sfx.play()
-                    Music_Background.stop()
                     return
                 elif event.key == pygame.K_UP:
                     scroll = max(0, scroll - 1)
@@ -734,7 +769,6 @@ def settings_screen():
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_RETURN):
                     Button_Click_sfx.play()
-                    Music_Background.stop()
                     return
                 if event.key == pygame.K_f:
                     SETTINGS["fullscreen"] = not SETTINGS.get("fullscreen", False)
@@ -833,6 +867,7 @@ def next_difficulty(cur):
 
 # -------------------- Main Menu -----------------------
 def main_menu():
+    global MUSIC_CHANNEL
     title = TITLE_FONT.render("Circle Eater", True, ACCENT)
     subtitle = FONT.render("Eat all circles as fast as you can!", True, BLACK)
 
@@ -840,7 +875,7 @@ def main_menu():
     btn_leader = Button("Leaderboard", center=(WIDTH // 2, HEIGHT // 2 + 90), size=(260, 64))
     btn_settings = Button("Settings", center=(WIDTH // 2, HEIGHT // 2 + 180), size=(220, 64))
     btn_quit = Button("Quit", center=(WIDTH // 2, HEIGHT // 2 + 270))
-
+    
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -850,16 +885,22 @@ def main_menu():
                     Button_Click_sfx.play()
                     return "play"
                 if event.key == pygame.K_ESCAPE:
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     Button_Click_sfx.play()
                     return "quit"
                 if event.key == pygame.K_l:
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return "leaderboard"
                 if event.key == pygame.K_s:
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return "settings"
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if btn_play.is_hover(pygame.mouse.get_pos()):
@@ -867,15 +908,21 @@ def main_menu():
                     return "play"
                 if btn_leader.is_hover(pygame.mouse.get_pos()):
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return "leaderboard"
                 if btn_settings.is_hover(pygame.mouse.get_pos()):
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return "settings"
                 if btn_quit.is_hover(pygame.mouse.get_pos()):
                     Button_Click_sfx.play()
-                    Music_Background.stop()
+                    if MUSIC_CHANNEL is not None:
+                        MUSIC_CHANNEL.stop()
+                        MUSIC_CHANNEL = None
                     return "quit"
 
         # Draw menu
