@@ -93,7 +93,6 @@ Circle-Eater/
 
 - Multiplayer (split-screen or network)
 - Enemies and power-ups
-- Background music
 - Online leaderboard (Firebase or Flask)
 - Custom player skins / themes
 
